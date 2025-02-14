@@ -9,17 +9,19 @@ from elasticsearch import Elasticsearch
 ES_HOST = "http://localhost:9200"
 ES_INDEX = "git-metadata"
 
-def index_git_metadata(repo_path):
-    """Extract and index Git metadata in Elasticsearch."""
+def index_git_metadata(repo_path, output_json=False):
+    """Extract Git metadata and either index in Elasticsearch or print as JSON."""
     if not os.path.isdir(repo_path) or not os.path.isdir(os.path.join(repo_path, ".git")):
         print(f"Error: '{repo_path}' is not a valid Git repository.")
         sys.exit(1)
 
-    # Initialize Elasticsearch client
-    es = Elasticsearch(ES_HOST)
-
     # Initialize GitPython repo object
     repo = git.Repo(repo_path)
+
+    # Initialize Elasticsearch client only if not outputting JSON
+    es = Elasticsearch(ES_HOST) if not output_json else None
+
+    indexed_data = []
 
     for file_path in repo.git.ls_files().split("\n"):
         try:
@@ -51,7 +53,7 @@ def index_git_metadata(repo_path):
                         "line": line.strip()
                     })
 
-            # Elasticsearch document structure
+            # Construct the document
             doc = {
                 "file_path": file_path,
                 "last_modified": last_modified,
@@ -63,17 +65,24 @@ def index_git_metadata(repo_path):
                 "file_content": file_content
             }
 
-            # Index document in Elasticsearch
-            es.index(index=ES_INDEX, id=file_path, body=doc)
-            print(f"Indexed: {file_path}")
+            if output_json:
+                indexed_data.append(doc)
+            else:
+                es.index(index=ES_INDEX, id=file_path, body=doc)
+                print(f"Indexed: {file_path}")
 
         except StopIteration:
             print(f"Skipping {file_path}, no commit history.")
 
+    if output_json:
+        print(json.dumps(indexed_data, indent=4))
+
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: python git_indexer.py <repo_path>")
-        sys.exit(1)
+    # if len(sys.argv) < 2 or len(sys.argv) > 3:
+    #     print("Usage: python git_indexer.py <repo_path> [--output json]")
+    #     sys.exit(1)
 
     repo_path = sys.argv[1]
-    index_git_metadata(repo_path)
+    output_json = "--output" in sys.argv and sys.argv[sys.argv.index("--output") + 1] == "json"
+
+    index_git_metadata(repo_path, output_json)
